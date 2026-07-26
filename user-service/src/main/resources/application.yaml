@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: user-service
+  profiles:
+    active: dev
+  config:
+    import: nacos:common-dev.yaml?namespace=public&group=DEFAULT_GROUP
+  cloud:
+    nacos:
+      config:
+        server-addr: 127.0.0.1:8848
+      discovery:
+        server-addr: 127.0.0.1:8848
+
+spring.cloud.sentinel.transport.dashboard: localhost:8090
+server:
+  port: 8085
