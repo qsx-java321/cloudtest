@@ -20,11 +20,11 @@ spring:
             - id: user-service-route
               uri: lb://user-service
               predicates:
-                       - Path=/user/**
+                - Path=/user/**
             - id: order-service-route
               uri: lb://order-service
               predicates:
-                       - Path=/order/**
+                - Path=/order/**
 
 server:
   port: 8080
