@@ -1,6 +1,6 @@
 # GatewayWebflux（Spring Cloud Gateway + Sentinel 学习项目）
 
-一个基于 **Spring Cloud Gateway（WebFlux 版）+ Sentinel 限流 + Nacos 注册/配置中心** 的响应式微服务学习项目，演示了网关路由、声明式远程调用（`@HttpExchange`）与 Sentinel 三层限流体系。
+一个基于 **Spring Cloud Gateway（WebFlux 版）+ Sentinel 限流 + Nacos 注册/配置中心** 的微服务学习项目，采用**混合技术栈**：网关保持响应式 WebFlux，业务模块使用主流的 Spring MVC + OpenFeign，演示了网关路由、声明式远程调用（OpenFeign）与 Sentinel 三层限流体系。
 
 ---
 
@@ -14,6 +14,7 @@
 | Spring Cloud Alibaba | 2025.0.0.0 | 通过 `spring-cloud-alibaba-dependencies` BOM 导入 |
 | Spring Cloud Gateway | 4.3.5 | 网关，`gateway-server-webflux` starter |
 | Spring Cloud LoadBalancer | 4.3.3 | 客户端负载均衡（替代 Ribbon） |
+| OpenFeign | 4.3.5 | 业务模块声明式远程调用 |
 | Sentinel 客户端 | 1.8.9 | `sentinel-core` / `sentinel-transport-common` |
 | Sentinel 控制台 | 1.8.9 | 网页控制台，端口 8090 |
 | Nacos 客户端 | 3.0.3 | 由 SCA BOM 管理 |
@@ -28,9 +29,11 @@
 
 | 模块 | 核心依赖 |
 |------|----------|
-| gateway | `spring-cloud-starter-gateway-server-webflux`、loadbalancer、nacos-discovery、nacos-config、sentinel、actuator |
-| user-service | webflux、nacos-discovery、nacos-config、sentinel、loadbalancer、actuator |
-| order-service | 同 user-service |
+| gateway | `spring-cloud-starter-gateway-server-webflux`、loadbalancer、nacos-discovery、sentinel、actuator |
+| user-service | `spring-boot-starter-web`、openfeign、loadbalancer、nacos-discovery、sentinel、actuator |
+| order-service | `spring-boot-starter-web`、loadbalancer、nacos-discovery、sentinel、actuator |
+
+> **技术栈边界**：网关（WebFlux）与业务模块（MVC）是**独立进程**，互不影响；同一进程内不混用 `web` 与 `webflux` 两个 starter，避免 Boot 强制切换 Web 类型。
 
 ---
 
@@ -52,26 +55,30 @@ cloud-gateway/
   - `/user/**` → `lb://user-service`
   - `/order/**` → `lb://order-service`
   - 使用新版配置前缀 `spring.cloud.gateway.server.webflux.routes`（对应 Gateway 5.x / 4.x 新写法，旧前缀 `spring.cloud.gateway.routes` 已弃用）
-- **负载均衡**：`lb://` 协议 + `spring-cloud-starter-loadbalancer`，从 Nacos 发现实例。
+- **负载均衡**：`lb://` 协议 + `spring-cloud-starter-loadbalancer`（响应式 `ReactorLoadBalancer`），从 Nacos 发现实例。
 - **Sentinel 网关流控**：已启用 `spring.cloud.sentinel.filter.enabled: true`，可通过控制台对网关进行流控。
 - **全局兜底**：`SentinelWebFluxConfig` 注册 `BlockRequestHandler`，限流时返回 429 + 自定义中文提示（UTF-8）。
+- **技术形态**：网关为 WebFlux（`Mono`/`Flux`），仅负责路由转发，不写业务逻辑，不使用阻塞式调用。
 
 ### 2. user-service —— 用户服务
 
-- **职责**：提供用户相关接口，并演示**声明式远程调用**下游订单服务。
+- **职责**：提供用户相关接口，并演示 **OpenFeign 声明式远程调用**下游订单服务。
+- **技术栈**：Spring MVC（`spring-boot-starter-web`）。
 - **对外接口**：
   - `GET /user/local`：本地查询，Sentinel 资源名 `userLocalApi`
   - `GET /user/callOrder`：远程调用订单服务，Sentinel 资源名 `userCallOrderApi`
-- **远程调用方式**：Spring 6 声明式 HTTP 客户端（替代 OpenFeign）：
-  - `OrderClient`：`@HttpExchange` + `@GetExchange("/order/get")`，返回 `Mono<String>`
-  - `WebClientConfig`：注入 `ReactorLoadBalancerExchangeFilterFunction` 做负载均衡，`baseUrl("lb://order-service")`，`HttpServiceProxyFactory` 生成代理实现
-- **Sentinel**：两个接口均用 `@SentinelResource` 保护，降级方法在 `UserControllerBlockHandler` 中。
+- **远程调用方式**：OpenFeign + Spring Cloud LoadBalancer：
+  - `OrderClient`：`@FeignClient(name = "order-service", fallbackFactory = OrderClientFallbackFactory.class)`，方法 `@GetMapping("/order/get")` 返回 `String`
+  - `OrderClientFallbackFactory` + `OrderClientFallback`：SentinelFeign 降级（需 `feign.sentinel.enabled: true`），order 服务不可用或限流时返回兜底文案
+  - 主类 `@EnableFeignClients` 扫描并生成代理；`lb://` 解析由 `FeignBlockingLoadBalancerClient` 完成
+- **Sentinel**：两个接口均用 `@SentinelResource` 保护，降级方法在 `UserControllerBlockHandler` 中；URL 层兜底由 `SentinelWebMvcInterceptorConfig`（webmvc v6x 适配）提供。
 
 ### 3. order-service —— 订单服务
 
 - **职责**：提供订单查询接口，作为远程调用的**被调方**。
+- **技术栈**：Spring MVC（`spring-boot-starter-web`）。
 - **对外接口**：`GET /order/get`，Sentinel 资源名 `orderGetApi`
-- **Sentinel**：`@SentinelResource` 保护，降级方法在 `OrderControllerBlockHandler` 中。
+- **Sentinel**：`@SentinelResource` 保护，降级方法在 `OrderControllerBlockHandler` 中；URL 层兜底由 `SentinelWebMvcInterceptorConfig`（webmvc v6x 适配）提供。
 
 ---
 
@@ -85,7 +92,7 @@ cloud-gateway/
     ▼
 Gateway (8080)  ── /user/** ──► user-service (8085)
     │                  │
-    │                  └── /user/callOrder ──► WebClient(lb://order-service) ──► order-service (8086) /order/get
+    │                  └── /user/callOrder ──► OpenFeign(lb://order-service) ──► order-service (8086) /order/get
     │
     └── /order/** ──► order-service (8086)
 ```
@@ -94,43 +101,37 @@ Gateway (8080)  ── /user/** ──► user-service (8085)
 
 ```
 调用 orderClient.getOrderInfo()
-  → HttpServiceProxyFactory 生成的代理解析 @GetExchange("/order/get")
-  → WebClient 经 ReactorLoadBalancerExchangeFilterFunction 从 Nacos 选择 order-service 实例
-  → 发起请求到 /order/get
-  → 返回 Mono<String> 响应
+  → @FeignClient 代理（SentinelFeign）拦截
+  → FeignBlockingLoadBalancerClient 解析 lb://order-service，经 Spring Cloud LoadBalancer 从 Nacos 选择实例
+  → 发起 HTTP 请求到 /order/get
+  → 返回 String 响应；若目标不可用/限流则走 OrderClientFallback 降级
 ```
 
-关键约束：`@GetExchange` 的路径必须与目标服务 `@GetMapping` 完全一致。
+关键约束：Feign 接口方法上的 `@GetMapping` 路径必须与目标服务 `@GetMapping` 完全一致。
 
 ### 3. Sentinel 三层限流体系
 
 | 层级 | 机制 | 触发后响应 |
 |------|------|-----------|
 | ① 注解层 | 接口上的 `@SentinelResource` + 静态 `blockHandler` | 429 + 各接口专属文案 |
-| ② URL 层兜底 | 每服务注册的 `BlockRequestHandler` | 429 + 全局文案（UTF-8 防乱码） |
+| ② URL 层兜底 | 每服务注册的 `SentinelWebMvcInterceptorConfig`（webmvc v6x 拦截器 + `BlockExceptionHandler`） | 429 + 全局文案（UTF-8 防乱码） |
 | ③ 网关层 | gateway 开启 `sentinel.filter.enabled` | 429 + 网关兜底文案 |
 
 控制台配置限流规则时，**资源名必须与 `@SentinelResource` 的 `value` 一致**：`userLocalApi`、`userCallOrderApi`、`orderGetApi`。
+
+> **双套 Sentinel 拦截说明**：业务模块已注册 `SentinelWebInterceptor`（URL 层），因此在 `application.yaml` 中关闭了 SCA 默认的 servlet 过滤器 `spring.cloud.sentinel.filter.enabled: false`，避免两套机制重复统计同一资源。网关模块则保持 `filter.enabled: true`。
 
 ---
 
 ## 四、配置说明
 
-三个服务统一通过 `spring.config.import` 从 Nacos 拉取共享配置：
+三个服务**不依赖 Nacos 配置中心**，所有配置写死在本地 `application.yaml`，仅使用 Nacos 做**服务注册发现**（`nacos-discovery`）。因此无需在 Nacos 预置任何 Data ID。
 
-```yaml
-spring:
-  config:
-    import: nacos:common-dev.yaml?namespace=public&group=DEFAULT_GROUP
-```
-
-| 服务 | 端口 | Nacos 配置中心 | 备注 |
-|------|------|---------------|------|
-| gateway | 8080 | 拉取 `common-dev.yaml` | 路由写死在本地 `application.yaml`，未放 Nacos |
-| user-service | 8085 | 拉取 `common-dev.yaml` | |
-| order-service | 8086 | 拉取 `common-dev.yaml` | |
-
-> Nacos 配置中心需提前创建 Data ID `common-dev.yaml`（namespace `public`、group `DEFAULT_GROUP`），否则应用启动会因找不到配置而失败。
+| 服务 | 端口 | 注册中心 | 配置 |
+|------|------|---------|------|
+| gateway | 8080 | Nacos（`nacos-discovery`） | 路由等全部在本地 `application.yaml` |
+| user-service | 8085 | Nacos（`nacos-discovery`） | 全部在本地 `application.yaml` |
+| order-service | 8086 | Nacos（`nacos-discovery`） | 全部在本地 `application.yaml` |
 
 ---
 
@@ -142,7 +143,8 @@ spring:
 - Maven 3.6+
 - Nacos Server 3.2.3（控制台端口 18080，gRPC 8848）
 - Sentinel Dashboard 1.8.9（控制台端口 8090）
-- Nacos 配置中心预置 `common-dev.yaml`（见上文）
+
+> 无需在 Nacos 配置中心预置任何 Data ID，服务配置全部本地化。
 
 ### 2. 启动顺序
 
@@ -168,8 +170,9 @@ spring:
 
 ## 六、学习要点
 
-- **响应式全栈**：三个模块均为 WebFlux 响应式（`Mono`），无 Spring MVC。
-- **声明式远程调用**：`@HttpExchange` 替代 OpenFeign，配合 `WebClient` + 负载均衡过滤器。
+- **混合技术栈**：网关保持响应式 WebFlux，业务模块使用主流 Spring MVC + OpenFeign，贴近生产实践；独立进程间技术栈互不影响。
+- **声明式远程调用**：OpenFeign + `lb://` 服务名，配合 Spring Cloud LoadBalancer 做客户端负载均衡，SentinelFeign 提供降级兜底。
 - **BOM 统一版本管理**：父 POM 仅导入两个 BOM，子模块不写版本。
-- **Sentinel 注解 + 全局兜底双保险**：接口级 `@SentinelResource` 与 URL 级 `BlockRequestHandler` 分层降级。
+- **Sentinel 注解 + 全局兜底双保险**：接口级 `@SentinelResource` 与 URL 级（webmvc v6x 适配）分层降级。
+- **Sentinel 双适配**：网关用 webflux 适配（`BlockRequestHandler`），业务模块用 webmvc v6x 适配（`BlockExceptionHandler`），同一进程只启用一套。
 - **网关新配置前缀**：`spring.cloud.gateway.server.webflux.routes`。

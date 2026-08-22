@@ -40,5 +40,7 @@ build/
 
 .vscode/
 
+.zcode/
+
 *.js
 .qoderignore

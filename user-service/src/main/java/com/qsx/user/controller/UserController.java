@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 @Slf4j
 @RestController
@@ -20,16 +19,16 @@ public class UserController {
 
     @GetMapping("/user/local")
     @SentinelResource(value = "userLocalApi", blockHandlerClass = UserControllerBlockHandler.class, blockHandler = "userLocalBlock")
-    public Mono<ResponseEntity<String>> userLocal() {
+    public ResponseEntity<String> userLocal() {
         log.info("[User服务] 执行本地用户查询逻辑");
-        return Mono.just(ResponseEntity.ok("【用户服务】测试用户ID：001，姓名：测试用户"));
+        return ResponseEntity.ok("【用户服务】测试用户ID：001，姓名：测试用户");
     }
 
     @GetMapping("/user/callOrder")
     @SentinelResource(value = "userCallOrderApi", blockHandlerClass = UserControllerBlockHandler.class, blockHandler = "userCallOrderBlock")
-    public Mono<ResponseEntity<String>> callOrder() {
+    public ResponseEntity<String> callOrder() {
         log.info("[User服务] 开始远程调用order服务接口");
-        return orderClient.getOrderInfo()
-                .map(resp -> ResponseEntity.ok("【用户服务】远程调用订单结果：" + resp));
+        String orderResp = orderClient.getOrderInfo();
+        return ResponseEntity.ok("【用户服务】远程调用订单结果：" + orderResp);
     }
 }

@@ -1,12 +1,11 @@
 package com.qsx.user.client;
 
-import org.springframework.web.service.annotation.GetExchange;
-import org.springframework.web.service.annotation.HttpExchange;
-import reactor.core.publisher.Mono;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
 
-@HttpExchange
+@FeignClient(name = "order-service", fallbackFactory = OrderClientFallbackFactory.class)
 public interface OrderClient {
 
-    @GetExchange("/order/get")
-    Mono<String> getOrderInfo();
+    @GetMapping("/order/get")
+    String getOrderInfo();
 }
